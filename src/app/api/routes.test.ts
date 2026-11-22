@@ -10,7 +10,7 @@ import { convertWaqiPm25IaqiToUgM3, getAirQualityReport } from '@/lib/aqi/provid
 
 describe('API Route Handlers, Rate Limiter, WAQI Converter & What-If Simulator Integration Suite', () => {
   it('GET /api/health returns service status and capability flags without exposing secrets', async () => {
-    const res = await getHealth();
+    const res = await getHealth(new NextRequest('http://localhost:3000/api/health'));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.status).toBe('ok');
@@ -77,7 +77,7 @@ describe('API Route Handlers, Rate Limiter, WAQI Converter & What-If Simulator I
   });
 
   it('GET and POST /api/community list initiatives and record validated pledges', async () => {
-    const getRes = await getCommunity();
+    const getRes = await getCommunity(new NextRequest('http://localhost:3000/api/community'));
     expect(getRes.status).toBe(200);
     const getJson = await getRes.json();
     expect(Array.isArray(getJson.initiatives)).toBe(true);

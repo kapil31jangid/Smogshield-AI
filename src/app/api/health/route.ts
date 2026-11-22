@@ -1,6 +1,23 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import {
+  buildGuardErrorResponse,
+  evaluateSensitiveOperationGuard,
+} from '@/lib/security/sensitive-ops';
 
-export async function GET() {
+/**
+ * @security Operational Health & Capability Endpoint
+ * Rate-limited (120 req/min/IP) and never exposes raw secret values—only boolean readiness flags.
+ */
+export async function GET(request: NextRequest) {
+  const guard = evaluateSensitiveOperationGuard(request, {
+    routeKey: 'health',
+    maxRequestsPerWindow: 120,
+    windowMs: 60_000,
+  });
+  if (!guard.allowed) {
+    return buildGuardErrorResponse(guard);
+  }
+
   const hasGeminiKey =
     Boolean(process.env.GEMINI_API_KEY) &&
     !process.env.GEMINI_API_KEY!.includes('your_');
@@ -37,6 +54,6 @@ export async function GET() {
         deterministicSafetyGuardrailsActive: true,
       },
     },
-    { status: 200 }
+    { status: 200, headers: { 'Cache-Control': 'no-store' } }
   );
 }

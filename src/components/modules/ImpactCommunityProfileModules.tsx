@@ -482,12 +482,12 @@ export function ProfileConfiguratorModule({
           </div>
         </div>
 
-        <div className="pt-2">
-          <div className="text-xs font-bold text-slate-800 mb-2">
+        <fieldset className="pt-2 border-0 p-0 m-0">
+          <legend className="text-xs font-bold text-slate-800 mb-2">
             {hi
               ? 'परिवार में शामिल आयु वर्ग:'
               : 'Age Groups Present in Household:'}
-          </div>
+          </legend>
           <div className="flex flex-wrap gap-3 text-xs">
             {(
               [
@@ -521,12 +521,12 @@ export function ProfileConfiguratorModule({
               );
             })}
           </div>
-        </div>
+        </fieldset>
 
-        <div className="pt-2">
-          <div className="text-xs font-bold text-slate-800 mb-2">
+        <fieldset className="pt-2 border-0 p-0 m-0">
+          <legend className="text-xs font-bold text-slate-800 mb-2">
             {hi ? 'उपलब्ध सुरक्षा उपकरण:' : 'Available Protective Equipment:'}
-          </div>
+          </legend>
           <div className="flex flex-wrap gap-3 text-xs">
             {(
               [
@@ -568,7 +568,7 @@ export function ProfileConfiguratorModule({
               );
             })}
           </div>
-        </div>
+        </fieldset>
 
         <div className="pt-2">
           <label className="inline-flex items-center gap-2.5 text-xs font-bold text-slate-900 cursor-pointer">

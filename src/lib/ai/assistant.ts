@@ -59,7 +59,7 @@ export function enforceDeterministicSafetyGuardrail(
   lang: Language
 ): { safeAnswer: string; safetyOverrideApplied: boolean } {
   const unsafeOutdoorAdvicePattern =
-    /\b(safe to run outdoors|go for a morning jog|good day for outdoor running|no mask needed|open all windows all day)\b/i;
+    /\b(safe to (run|jog|exercise) out(doors|side)|go for a morning jog|good day for outdoor running|no mask needed|open all windows all day)\b/i;
 
   if (env.naqi >= 201 && unsafeOutdoorAdvicePattern.test(rawAnswer)) {
     const prefix =

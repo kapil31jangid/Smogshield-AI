@@ -1,42 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CommunityPledgeRequestSchema } from '@/lib/validators/schemas';
 import { INITIAL_COMMUNITY_INITIATIVES } from '@/lib/engine/impact';
-import { checkRateLimit } from '@/lib/security/rate-limit';
+import {
+  buildGuardErrorResponse,
+  evaluateSensitiveOperationGuard,
+} from '@/lib/security/sensitive-ops';
 
 // shortcut: in-memory pledge counter per serverless instance, upgrade to SQLite/Postgres if cross-instance pledge durability is required.
 const pledgeCounts = new Map<string, number>(
   INITIAL_COMMUNITY_INITIATIVES.map((item) => [item.id, item.householdsPledged])
 );
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const guard = evaluateSensitiveOperationGuard(request, {
+    routeKey: 'community-read',
+    maxRequestsPerWindow: 60,
+    windowMs: 60_000,
+  });
+  if (!guard.allowed) {
+    return buildGuardErrorResponse(guard);
+  }
+
   const initiatives = INITIAL_COMMUNITY_INITIATIVES.map((item) => ({
     ...item,
     householdsPledged: pledgeCounts.get(item.id) ?? item.householdsPledged,
   }));
-  return NextResponse.json({ initiatives }, { status: 200 });
+  return NextResponse.json(
+    { initiatives },
+    { status: 200, headers: { 'Cache-Control': 'no-store' } }
+  );
 }
 
+/**
+ * @security Sensitive Operation: State-Mutating Community Pledge
+ * Protected by Same-Origin CSRF boundary, Content-Type verification (415),
+ * 8 KB payload ceiling (413), sliding-window IP rate limiting (429), and Zod validation.
+ */
 export async function POST(request: NextRequest) {
-  const clientIp =
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    '127.0.0.1';
-  const limit = checkRateLimit(`community:${clientIp}`, 20, 60_000);
-  if (!limit.allowed) {
-    return NextResponse.json(
-      {
-        error: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many community pledges submitted recently.',
-      },
-      { status: 429 }
-    );
-  }
+  const guard = evaluateSensitiveOperationGuard(request, {
+    routeKey: 'community-write',
+    maxRequestsPerWindow: 20,
+    windowMs: 60_000,
+    maxPayloadBytes: 8_192,
+    requireJsonContentType: true,
+    enforceSameOriginOnMutation: true,
+  });
 
-  const contentLength = Number(request.headers.get('content-length') || 0);
-  if (contentLength > 8_192) {
-    return NextResponse.json(
-      { error: 'PAYLOAD_TOO_LARGE', message: 'Request payload exceeds 8 KB limit.' },
-      { status: 413 }
-    );
+  if (!guard.allowed) {
+    return buildGuardErrorResponse(guard);
   }
 
   let body: unknown;
@@ -45,7 +56,7 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json(
       { error: 'INVALID_JSON', message: 'Invalid JSON payload.' },
-      { status: 400 }
+      { status: 400, headers: { 'Cache-Control': 'no-store' } }
     );
   }
 
@@ -57,7 +68,7 @@ export async function POST(request: NextRequest) {
         message: 'Invalid initiative ID.',
         details: parsed.error.flatten().fieldErrors,
       },
-      { status: 400 }
+      { status: 400, headers: { 'Cache-Control': 'no-store' } }
     );
   }
 
@@ -65,7 +76,7 @@ export async function POST(request: NextRequest) {
   if (!pledgeCounts.has(initiativeId)) {
     return NextResponse.json(
       { error: 'NOT_FOUND', message: 'Community initiative not found.' },
-      { status: 404 }
+      { status: 404, headers: { 'Cache-Control': 'no-store' } }
     );
   }
 
@@ -78,6 +89,6 @@ export async function POST(request: NextRequest) {
       householdsPledged: nextCount,
       status: 'PLEDGED',
     },
-    { status: 200 }
+    { status: 200, headers: { 'Cache-Control': 'no-store' } }
   );
 }
