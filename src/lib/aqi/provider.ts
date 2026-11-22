@@ -323,6 +323,81 @@ async function fetchWithTimeout(url: string, timeoutMs = 3800): Promise<Response
 }
 
 /**
+ * Tier 1A-Gov: Official Indian Government CPCB Open Government Data Platform (api.data.gov.in)
+ * Resource ID: 3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69
+ */
+async function tryFetchCpcbDataGovStation(
+  loc: CityStationConfig
+): Promise<{
+  pollutants: PollutantReading;
+  observedAt: string;
+  stationName: string;
+} | null> {
+  const apiKey = process.env.CPCB_DATA_GOV_API_KEY;
+  if (!apiKey || apiKey.includes('your_') || !loc.hasLocalOfficialStation || !loc.cpcbStationMatch) {
+    return null;
+  }
+
+  try {
+    const cityFilter = loc.city.split(' ')[0] || 'Delhi';
+    const url = `https://api.data.gov.in/resource/3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69?api-key=${encodeURIComponent(
+      apiKey.trim()
+    )}&format=json&limit=40&filters%5Bcity%5D=${encodeURIComponent(cityFilter)}`;
+    const res = await fetchWithTimeout(url, 3800);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const records: Array<{
+      station?: string;
+      pollutant_id?: string;
+      pollutant_avg?: string;
+      last_update?: string;
+    }> = Array.isArray(json?.records) ? json.records : [];
+    if (records.length === 0) return null;
+
+    const matchKey = loc.cpcbStationMatch.toLowerCase();
+    const matched = records.filter((r) =>
+      (r.station ?? '').toLowerCase().includes(matchKey)
+    );
+    const pool = matched.length > 0 ? matched : records;
+
+    const reading: PollutantReading = {
+      pm25: null,
+      pm10: null,
+      no2: null,
+      so2: null,
+      co: null,
+      o3: null,
+    };
+    let stationLabel = loc.stationName;
+
+    for (const row of pool) {
+      if (row.station) stationLabel = `${row.station} (Official CPCB data.gov.in)`;
+      const pid = (row.pollutant_id ?? '').toUpperCase();
+      const val = Number(row.pollutant_avg);
+      if (Number.isNaN(val) || val <= 0) continue;
+      if (pid === 'PM2.5' && reading.pm25 === null) reading.pm25 = val;
+      if (pid === 'PM10' && reading.pm10 === null) reading.pm10 = val;
+      if (pid === 'NO2' && reading.no2 === null) reading.no2 = val;
+      if (pid === 'SO2' && reading.so2 === null) reading.so2 = val;
+      if (pid === 'CO' && reading.co === null) {
+        reading.co = val > 15 ? Number((val / 10).toFixed(2)) : val;
+      }
+      if ((pid === 'OZONE' || pid === 'O3') && reading.o3 === null) reading.o3 = val;
+    }
+
+    if (reading.pm25 === null && reading.pm10 === null) return null;
+
+    return {
+      pollutants: reading,
+      observedAt: new Date().toISOString(),
+      stationName: stationLabel,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Tier 1A: Official Indian Government CPCB / State PCB stations via OpenAQ v3 API (when OPENAQ_API_KEY is configured)
  * or CPCB Open Government Data Platform (api.data.gov.in when CPCB_DATA_GOV_API_KEY is configured).
  */
@@ -575,6 +650,60 @@ export async function getAirQualityReport(
 
   // If offline mode is explicitly requested for resilience verification, immediately return Tier 3 snapshot
   if (simulateMode !== 'offline') {
+    // 1A-Gov. Try Direct Official CPCB Open Government Data Platform (api.data.gov.in) first
+    const cpcbGovData = await tryFetchCpcbDataGovStation(loc);
+    if (cpcbGovData) {
+      const observedIso =
+        simulateMode === 'stale'
+          ? new Date(now.getTime() - 6 * 3600 * 1000).toISOString()
+          : cpcbGovData.observedAt;
+      const computed = computeOverallNaqi(cpcbGovData.pollutants);
+      const { freshness, dataAgeMinutes } = evaluateFreshness(
+        observedIso,
+        now.getTime(),
+        'tier1_official_station',
+        simulateMode
+      );
+      const hourly = generateDiurnalHourlyCurve(cpcbGovData.pollutants.pm25 ?? 150);
+      return {
+        locationId: loc.id,
+        city: loc.city,
+        state: loc.state,
+        stationName: cpcbGovData.stationName,
+        coordinates: { lat: loc.lat, lon: loc.lon },
+        observedAt: observedIso,
+        fetchedAt: nowIso,
+        dataAgeMinutes,
+        naqi: computed.naqi,
+        category: computed.category,
+        dominantPollutant: computed.dominantPollutant,
+        whoPm25Multiple: computed.whoPm25Multiple,
+        healthSummary: getHealthSummaryForCategory(
+          computed.category,
+          computed.naqi,
+          computed.whoPm25Multiple
+        ),
+        pollutants: cpcbGovData.pollutants,
+        subIndices: computed.subIndices,
+        weather: buildWeatherContext(
+          loc.offlineWeather.temperatureC,
+          loc.offlineWeather.humidityPct,
+          loc.offlineWeather.windSpeedKmh
+        ),
+        hourlyForecast: hourly,
+        saferOutdoorWindow: identifySaferOutdoorWindow(hourly, computed.naqi),
+        freshness,
+        sourceName: 'Official CPCB Open Government Data Platform India (api.data.gov.in)',
+        sourceTier: 'tier1_official_station',
+        sourceUrl: 'https://www.data.gov.in/resource/real-time-air-quality-index-various-locations',
+        isOfficialStation: true,
+        degradedReason:
+          simulateMode === 'stale'
+            ? 'Station telemetry is older than 4 hours (Stale Reading). Applying conservative safety margins.'
+            : undefined,
+      };
+    }
+
     // 1A. Try Tier 1A Official CPCB Station via OpenAQ v3 if OPENAQ_API_KEY is configured
     const openAqData = await tryFetchOpenAqOfficialStation(loc);
     if (openAqData) {
