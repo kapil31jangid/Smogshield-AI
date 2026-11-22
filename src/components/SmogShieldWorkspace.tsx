@@ -7,7 +7,7 @@ import {
   Car,
   CheckCircle2,
   Clock,
-  CloudFog,
+  Cloud,
   Compass,
   ExternalLink,
   HeartPulse,
@@ -15,6 +15,8 @@ import {
   Info,
   Languages,
   Leaf,
+  LogIn,
+  LogOut,
   MapPin,
   MessageSquare,
   RefreshCw,
@@ -27,6 +29,13 @@ import {
   Users,
   Wind,
 } from 'lucide-react';
+import {
+  loadCloudHouseholdData,
+  signInWithGooglePopup,
+  signOutFirebaseUser,
+  subscribeToAuthState,
+  syncCloudHouseholdData,
+} from '@/lib/firebase/client';
 import {
   AgeGroup,
   AirQualityReport,
@@ -213,6 +222,16 @@ export default function SmogShieldWorkspace({ initialReport, locations }: Props)
   );
   const [pledgedIds, setPledgedIds] = useState<string[]>([]);
 
+  // Firebase Auth & Cloud Sync State (Optional — Guest mode always unlocked)
+  const [authUser, setAuthUser] = useState<{
+    uid: string;
+    displayName: string | null;
+    email: string | null;
+  } | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
+  const [cloudSynced, setCloudSynced] = useState<boolean>(false);
+
   // Assistant State
   const [chatInput, setChatInput] = useState<string>('');
   const [isSendingChat, setIsSendingChat] = useState<boolean>(false);
@@ -230,7 +249,7 @@ export default function SmogShieldWorkspace({ initialReport, locations }: Props)
     },
   ]);
 
-  // Hydrate persisted profile & action history safely after mount
+  // Hydrate persisted profile & action history safely after mount, and subscribe to Firebase Auth
   useEffect(() => {
     try {
       const savedProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
@@ -250,7 +269,60 @@ export default function SmogShieldWorkspace({ initialReport, locations }: Props)
     } catch {
       // Ignore storage read errors in restricted browsing modes
     }
+
+    const unsubscribe = subscribeToAuthState(async (user) => {
+      if (user) {
+        setAuthUser({
+          uid: user.uid,
+          displayName: user.displayName,
+          email: user.email,
+        });
+        const cloud = await loadCloudHouseholdData(user.uid);
+        if (cloud?.profile) {
+          setProfile(cloud.profile);
+          setCloudSynced(true);
+        }
+        if (Array.isArray(cloud?.completedActions)) {
+          setCompletedActions(cloud.completedActions);
+        }
+      } else {
+        setAuthUser(null);
+        setCloudSynced(false);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
+
+  const handleGoogleSignIn = async () => {
+    setAuthError(null);
+    setIsSigningIn(true);
+    try {
+      const user = await signInWithGooglePopup();
+      setAuthUser({
+        uid: user.uid,
+        displayName: user.displayName,
+        email: user.email,
+      });
+      const synced = await syncCloudHouseholdData(user.uid, profile, completedActions);
+      setCloudSynced(synced);
+    } catch (err) {
+      setAuthError(
+        err instanceof Error
+          ? err.message
+          : 'Google Sign-In could not be completed. Continuing in Guest Mode.'
+      );
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleFirebaseSignOut = async () => {
+    setAuthError(null);
+    await signOutFirebaseUser();
+    setAuthUser(null);
+    setCloudSynced(false);
+  };
 
   const saveProfile = (next: FamilyProfile) => {
     setProfile(next);
@@ -258,6 +330,11 @@ export default function SmogShieldWorkspace({ initialReport, locations }: Props)
       localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(next));
     } catch {
       // Ignore storage quota errors
+    }
+    if (authUser) {
+      void syncCloudHouseholdData(authUser.uid, next, completedActions).then((ok) =>
+        setCloudSynced(ok)
+      );
     }
   };
 
@@ -360,6 +437,11 @@ export default function SmogShieldWorkspace({ initialReport, locations }: Props)
       localStorage.setItem(COMPLETED_STORAGE_KEY, JSON.stringify(next));
     } catch {
       // Ignore storage error
+    }
+    if (authUser) {
+      void syncCloudHouseholdData(authUser.uid, profile, next).then((ok) =>
+        setCloudSynced(ok)
+      );
     }
   };
 
@@ -563,6 +645,48 @@ export default function SmogShieldWorkspace({ initialReport, locations }: Props)
               <Languages className="h-3.5 w-3.5" aria-hidden="true" />
               <span>{hi ? 'English' : 'हिन्दी (Hindi)'}</span>
             </button>
+
+            {authUser ? (
+              <div className="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs">
+                <Cloud className="h-3.5 w-3.5 text-teal-800" aria-hidden="true" />
+                <span className="font-semibold text-teal-950 max-w-[130px] truncate">
+                  {authUser.displayName || authUser.email || 'Firebase User'}
+                </span>
+                {cloudSynced && (
+                  <span className="text-[10px] font-bold text-emerald-800">
+                    • Synced
+                  </span>
+                )}
+                <button
+                  type="button"
+                  data-testid="firebase-signout-btn"
+                  onClick={() => void handleFirebaseSignOut()}
+                  className="ml-1 inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-bold text-slate-800 border border-slate-300 hover:bg-slate-100"
+                >
+                  <LogOut className="h-3 w-3" aria-hidden="true" />
+                  <span>{hi ? 'लॉग आउट' : 'Sign Out'}</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                data-testid="firebase-signin-btn"
+                onClick={() => void handleGoogleSignIn()}
+                disabled={isSigningIn}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-teal-800 bg-white px-2.5 py-1.5 text-xs font-bold text-teal-950 shadow-sm hover:bg-teal-50 disabled:opacity-50"
+              >
+                <LogIn className="h-3.5 w-3.5 text-teal-800" aria-hidden="true" />
+                <span>
+                  {isSigningIn
+                    ? hi
+                      ? 'कनेक्ट हो रहा है...'
+                      : 'Signing in...'
+                    : hi
+                      ? 'Google साइन-इन (क्लाउड सिंक)'
+                      : 'Google Sign-In (Cloud Sync)'}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -570,6 +694,25 @@ export default function SmogShieldWorkspace({ initialReport, locations }: Props)
       {/* Main Content Landmark */}
       <main id="main-workspace" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 space-y-6">
         {/* Degraded / Error / Stale Alert Banners */}
+        {authError && (
+          <div
+            role="alert"
+            className="flex items-start justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950"
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-800 shrink-0 mt-0.5" aria-hidden="true" />
+              <span>{authError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAuthError(null)}
+              className="font-bold underline"
+            >
+              {hi ? 'बंद करें' : 'Dismiss'}
+            </button>
+          </div>
+        )}
+
         {aqiError && (
           <div
             role="alert"
