@@ -1,10 +1,15 @@
 import { expect, test } from '@playwright/test';
 
 test.describe('SmogShield AI — 10 Mandatory Competition Scenarios E2E', () => {
-  test('Scenarios 1–4 & 8: Severely polluted location, moderate pollution, no local station, stale AQI, and offline provider', async ({
+  test('Scenarios 1–4 & 8: Auth Gate entry, Severely polluted location, moderate pollution, no local station, stale AQI, and offline provider', async ({
     page,
   }) => {
     await page.goto('/');
+
+    // Verify application starts on the Firebase Authentication screen gate first
+    await expect(page.getByTestId('auth-google-signin-btn')).toBeVisible();
+    await expect(page.getByTestId('auth-guest-continue-btn')).toBeVisible();
+    await page.getByTestId('auth-guest-continue-btn').click();
 
     // Scenario 1: Severely polluted location (Default Delhi NCR - Anand Vihar)
     await expect(page.locator('h1')).toContainText('New Delhi');
@@ -48,6 +53,7 @@ test.describe('SmogShield AI — 10 Mandatory Competition Scenarios E2E', () => 
     page,
   }) => {
     await page.goto('/');
+    await page.getByTestId('auth-guest-continue-btn').click();
 
     // Scenario 5: Family with limited financial resources (No Purifier / Two-Wheeler preset)
     await page.getByTestId('preset-budget-commuter-household').click();
@@ -93,6 +99,7 @@ test.describe('SmogShield AI — 10 Mandatory Competition Scenarios E2E', () => 
     page,
   }) => {
     await page.goto('/');
+    await page.getByTestId('auth-guest-continue-btn').click();
     await page.getByTestId('tab-assistant').click();
 
     const input = page.getByTestId('assistant-input');
@@ -122,5 +129,7 @@ test.describe('SmogShield AI — 10 Mandatory Competition Scenarios E2E', () => 
     await page.keyboard.press('Tab');
     const skipLink = page.locator('a[href="#main-workspace"]');
     await expect(skipLink).toBeFocused();
+    await page.getByTestId('auth-guest-continue-btn').click();
+    await expect(page.getByTestId('naqi-value')).toBeVisible();
   });
 });

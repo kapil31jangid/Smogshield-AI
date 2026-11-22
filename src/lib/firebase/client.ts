@@ -1,24 +1,15 @@
-import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
-import {
-  getAuth,
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut as firebaseSignOut,
-  type Auth,
-  type User,
-} from 'firebase/auth';
-import {
-  doc,
-  getDoc,
-  getFirestore,
-  setDoc,
-  type Firestore,
-} from 'firebase/firestore';
 import type { CompletedActionRecord, FamilyProfile } from '@/types/smogshield';
 
+export interface FirebaseAuthUser {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+}
+
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  apiKey:
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+    'AIzaSyBsJzC3H6LHJtsygG-e5HlbCRFCXNsv6bo',
   authDomain:
     process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
     'smogshield-ai-kapil.firebaseapp.com',
@@ -34,73 +25,95 @@ const firebaseConfig = {
     '1:609090729839:web:2b8cce908b660935a0da9a',
 };
 
-let appInstance: FirebaseApp | null = null;
-let authInstance: Auth | null = null;
-let dbInstance: Firestore | null = null;
-
-export function getFirebaseClient(): {
-  app: FirebaseApp | null;
-  auth: Auth | null;
-  db: Firestore | null;
-} {
+async function getFirebaseClientAsync() {
   if (typeof window === 'undefined') {
-    return { app: null, auth: null, db: null };
+    return null;
   }
-  if (!firebaseConfig.apiKey) {
-    return { app: null, auth: null, db: null };
-  }
-  try {
-    if (!appInstance) {
-      appInstance = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-    }
-    if (!authInstance) {
-      authInstance = getAuth(appInstance);
-    }
-    if (!dbInstance) {
-      dbInstance = getFirestore(appInstance);
-    }
-    return { app: appInstance, auth: authInstance, db: dbInstance };
-  } catch {
-    return { app: null, auth: null, db: null };
-  }
+  const [{ getApp, getApps, initializeApp }, authMod, firestoreMod] =
+    await Promise.all([
+      import('firebase/app'),
+      import('firebase/auth'),
+      import('firebase/firestore'),
+    ]);
+  const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+  const auth = authMod.getAuth(app);
+  const db = firestoreMod.getFirestore(app);
+  return { app, auth, db, authMod, firestoreMod };
 }
 
 export function subscribeToAuthState(
-  callback: (user: User | null) => void
+  callback: (user: FirebaseAuthUser | null) => void
 ): () => void {
-  const { auth } = getFirebaseClient();
-  if (!auth) {
+  if (typeof window === 'undefined') {
     callback(null);
     return () => {};
   }
-  return onAuthStateChanged(auth, callback, () => callback(null));
+
+  let unsub: (() => void) | null = null;
+  let cancelled = false;
+
+  getFirebaseClientAsync()
+    .then((client) => {
+      if (cancelled || !client) {
+        if (!cancelled) callback(null);
+        return;
+      }
+      unsub = client.authMod.onAuthStateChanged(
+        client.auth,
+        (u) => {
+          if (u) {
+            callback({
+              uid: u.uid,
+              displayName: u.displayName,
+              email: u.email,
+            });
+          } else {
+            callback(null);
+          }
+        },
+        () => callback(null)
+      );
+    })
+    .catch(() => {
+      if (!cancelled) callback(null);
+    });
+
+  return () => {
+    cancelled = true;
+    if (unsub) unsub();
+  };
 }
 
-export async function signInWithGooglePopup(): Promise<User> {
-  const { auth } = getFirebaseClient();
-  if (!auth) {
-    throw new Error('Firebase Authentication is not initialized in this browser.');
+export async function signInWithGooglePopup(): Promise<FirebaseAuthUser> {
+  const client = await getFirebaseClientAsync();
+  if (!client) {
+    throw new Error('Firebase Authentication is not available outside the browser.');
   }
-  const provider = new GoogleAuthProvider();
+  const provider = new client.authMod.GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
-  const cred = await signInWithPopup(auth, provider);
-  return cred.user;
+  const cred = await client.authMod.signInWithPopup(client.auth, provider);
+  return {
+    uid: cred.user.uid,
+    displayName: cred.user.displayName,
+    email: cred.user.email,
+  };
 }
 
 export async function signOutFirebaseUser(): Promise<void> {
-  const { auth } = getFirebaseClient();
-  if (!auth) return;
-  await firebaseSignOut(auth);
+  const client = await getFirebaseClientAsync();
+  if (!client) return;
+  await client.authMod.signOut(client.auth);
 }
 
 export async function loadCloudHouseholdData(uid: string): Promise<{
   profile?: FamilyProfile;
   completedActions?: CompletedActionRecord[];
 } | null> {
-  const { db } = getFirebaseClient();
-  if (!db) return null;
   try {
-    const snap = await getDoc(doc(db, 'households', uid));
+    const client = await getFirebaseClientAsync();
+    if (!client) return null;
+    const { doc, getDoc } = client.firestoreMod;
+    const snap = await getDoc(doc(client.db, 'households', uid));
     if (!snap.exists()) return null;
     const data = snap.data();
     return {
@@ -119,11 +132,12 @@ export async function syncCloudHouseholdData(
   profile: FamilyProfile,
   completedActions: CompletedActionRecord[]
 ): Promise<boolean> {
-  const { db } = getFirebaseClient();
-  if (!db) return false;
   try {
+    const client = await getFirebaseClientAsync();
+    if (!client) return false;
+    const { doc, setDoc } = client.firestoreMod;
     await setDoc(
-      doc(db, 'households', uid),
+      doc(client.db, 'households', uid),
       {
         profile,
         completedActions: completedActions.slice(0, 50),
