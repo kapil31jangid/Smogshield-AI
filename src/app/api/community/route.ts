@@ -31,6 +31,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 8_192) {
+    return NextResponse.json(
+      { error: 'PAYLOAD_TOO_LARGE', message: 'Request payload exceeds 8 KB limit.' },
+      { status: 413 }
+    );
+  }
+
   let body: unknown;
   try {
     body = await request.json();

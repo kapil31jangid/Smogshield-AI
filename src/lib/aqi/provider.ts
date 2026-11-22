@@ -218,6 +218,48 @@ export function resolveLocationConfig(cityId: string): CityStationConfig {
   return found ?? INDIAN_MONITORING_LOCATIONS[0]!;
 }
 
+/**
+ * WAQI's `iaqi.pm25.v` and `iaqi.pm10.v` fields report US-EPA AQI sub-indices rather than raw ug/m3.
+ * Converts WAQI US-EPA PM2.5 sub-index back into raw concentration (ug/m3) before applying Indian CPCB NAQI equations.
+ */
+export function convertWaqiPm25IaqiToUgM3(iaqi: number): number {
+  if (iaqi <= 0) return 0;
+  const bands: Array<[number, number, number, number]> = [
+    [0, 50, 0, 12.0],
+    [51, 100, 12.1, 35.4],
+    [101, 150, 35.5, 55.4],
+    [151, 200, 55.5, 150.4],
+    [201, 300, 150.5, 250.4],
+    [301, 500, 250.5, 500.4],
+  ];
+  for (const [iLow, iHigh, cLow, cHigh] of bands) {
+    if (iaqi <= iHigh) {
+      const ratio = (Math.max(iLow, iaqi) - iLow) / (iHigh - iLow);
+      return Math.round((cLow + ratio * (cHigh - cLow)) * 10) / 10;
+    }
+  }
+  return 320;
+}
+
+export function convertWaqiPm10IaqiToUgM3(iaqi: number): number {
+  if (iaqi <= 0) return 0;
+  const bands: Array<[number, number, number, number]> = [
+    [0, 50, 0, 54],
+    [51, 100, 55, 154],
+    [101, 150, 155, 254],
+    [151, 200, 255, 354],
+    [201, 300, 355, 424],
+    [301, 500, 425, 604],
+  ];
+  for (const [iLow, iHigh, cLow, cHigh] of bands) {
+    if (iaqi <= iHigh) {
+      const ratio = (Math.max(iLow, iaqi) - iLow) / (iHigh - iLow);
+      return Math.round(cLow + ratio * (cHigh - cLow));
+    }
+  }
+  return 480;
+}
+
 export function buildWeatherContext(
   temperatureC: number | null,
   humidityPct: number | null,
@@ -251,12 +293,12 @@ export function buildWeatherContext(
 }
 
 export function generateDiurnalHourlyCurve(basePm25: number): HourlyWindow[] {
-  // Realistic winter smog diurnal curve: peaks at 06:00-09:00 and 20:00-23:00 due to boundary-layer inversion;
-  // dips 25%-35% between 13:00-16:00 due to afternoon solar mixing.
+  // Modeled boundary-layer diurnal curve when 24h CAMS forecast is unavailable:
+  // peaks at 06:00-09:00 and 20:00-23:00 due to radiative surface cooling; dips 25%-32% at 13:00-16:00.
   const multipliers = [
-    1.12, 1.10, 1.08, 1.08, 1.12, 1.20, // 00-05
-    1.26, 1.28, 1.22, 1.10, 0.98, 0.86, // 06-11
-    0.76, 0.70, 0.68, 0.72, 0.82, 0.96, // 12-17
+    1.12, 1.1, 1.08, 1.08, 1.12, 1.2, // 00-05
+    1.26, 1.28, 1.22, 1.1, 0.98, 0.86, // 06-11
+    0.76, 0.7, 0.68, 0.72, 0.82, 0.96, // 12-17
     1.08, 1.16, 1.22, 1.24, 1.18, 1.14, // 18-23
   ];
 
@@ -293,18 +335,27 @@ export function identifySaferOutdoorWindow(
 
   if (best.naqi > 300) {
     return {
-      label: '13:30 – 15:30 (Relative Dip Only — Still Hazardous)',
+      label: '13:30 – 15:30 (Relative Dip Only — Still Very Poor/Severe)',
       expectedNaqi: best.naqi,
-      recommendationEn: `Even during peak afternoon solar mixing (13:30–15:30), NAQI remains ~${best.naqi}. Avoid outdoor exercise and keep windows closed; use this window only for unavoidable short errands with an N95 mask.`,
-      recommendationHi: `दोपहर की धूप (13:30–15:30) में भी NAQI ~${best.naqi} रहता है। बाहरी व्यायाम से बचें और खिड़कियां बंद रखें; केवल अत्यंत आवश्यक कार्य के लिए N95 मास्क पहनकर ही बाहर निकलें।`,
+      recommendationEn: `Even during peak afternoon solar mixing (13:30–15:30), NAQI remains ~${best.naqi} (Hazardous). Do NOT treat this window as safe for outdoor exercise; use it only for unavoidable short errands with a fitted N95 mask.`,
+      recommendationHi: `दोपहर की धूप (13:30–15:30) में भी NAQI ~${best.naqi} (खतरनाक) रहता है। इसे बाहरी व्यायाम के लिए सुरक्षित न मानें; केवल अत्यंत आवश्यक कार्य के लिए N95 मास्क पहनकर ही बाहर निकलें।`,
+    };
+  }
+
+  if (best.naqi > 200) {
+    return {
+      label: '13:00 – 16:00 (Lowest Relative Exposure — Still Poor Air)',
+      expectedNaqi: best.naqi,
+      recommendationEn: `Pollution drops to its daily minimum (~NAQI ${best.naqi}, Poor) between 13:00 and 16:00. Keep strenuous workouts indoors, and schedule brief 15-minute room ventilation or essential errands in this window.`,
+      recommendationHi: `दोपहर 13:00 से 16:00 के बीच प्रदूषण अपने न्यूनतम स्तर (~NAQI ${best.naqi}, खराब) पर होता है। भारी व्यायाम घर के अंदर ही करें और संक्षिप्त वेंटिलेशन या आवश्यक काम इसी समय करें।`,
     };
   }
 
   return {
     label: '13:00 – 16:00 (Afternoon Solar Dispersion Window)',
     expectedNaqi: best.naqi,
-    recommendationEn: `Pollution drops to its lowest daily level (~NAQI ${best.naqi}) between 13:00 and 16:00 as afternoon warmth lifts the inversion layer. Schedule brief ventilation or essential errands in this window.`,
-    recommendationHi: `दोपहर 13:00 से 16:00 के बीच धूप के कारण स्मॉग की परत ऊपर उठती है और NAQI घटकर ~${best.naqi} हो जाता है। आवश्यक बाहरी काम या संक्षिप्त वेंटिलेशन इसी समय करें।`,
+    recommendationEn: `Pollution drops to its lowest daily level (~NAQI ${best.naqi}) between 13:00 and 16:00 as afternoon warmth lifts the inversion layer. Schedule home ventilation or outdoor errands in this window.`,
+    recommendationHi: `दोपहर 13:00 से 16:00 के बीच धूप के कारण स्मॉग की परत ऊपर उठती है और NAQI घटकर ~${best.naqi} हो जाता है। आवश्यक बाहरी काम या वेंटिलेशन इसी समय करें।`,
   };
 }
 
@@ -322,10 +373,6 @@ async function fetchWithTimeout(url: string, timeoutMs = 3800): Promise<Response
   }
 }
 
-/**
- * Tier 1A-Gov: Official Indian Government CPCB Open Government Data Platform (api.data.gov.in)
- * Resource ID: 3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69
- */
 async function tryFetchCpcbDataGovStation(
   loc: CityStationConfig
 ): Promise<{
@@ -350,14 +397,11 @@ async function tryFetchCpcbDataGovStation(
       station?: string;
       pollutant_id?: string;
       pollutant_avg?: string;
-      last_update?: string;
     }> = Array.isArray(json?.records) ? json.records : [];
     if (records.length === 0) return null;
 
     const matchKey = loc.cpcbStationMatch.toLowerCase();
-    const matched = records.filter((r) =>
-      (r.station ?? '').toLowerCase().includes(matchKey)
-    );
+    const matched = records.filter((r) => (r.station ?? '').toLowerCase().includes(matchKey));
     const pool = matched.length > 0 ? matched : records;
 
     const reading: PollutantReading = {
@@ -386,7 +430,6 @@ async function tryFetchCpcbDataGovStation(
     }
 
     if (reading.pm25 === null && reading.pm10 === null) return null;
-
     return {
       pollutants: reading,
       observedAt: new Date().toISOString(),
@@ -397,10 +440,6 @@ async function tryFetchCpcbDataGovStation(
   }
 }
 
-/**
- * Tier 1A: Official Indian Government CPCB / State PCB stations via OpenAQ v3 API (when OPENAQ_API_KEY is configured)
- * or CPCB Open Government Data Platform (api.data.gov.in when CPCB_DATA_GOV_API_KEY is configured).
- */
 async function tryFetchOpenAqOfficialStation(
   loc: CityStationConfig
 ): Promise<{
@@ -419,10 +458,7 @@ async function tryFetchOpenAqOfficialStation(
     const timer = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-        'X-API-Key': apiKey.trim(),
-      },
+      headers: { Accept: 'application/json', 'X-API-Key': apiKey.trim() },
       next: { revalidate: 300 },
     });
     clearTimeout(timer);
@@ -438,8 +474,11 @@ async function tryFetchOpenAqOfficialStation(
     );
     if (!latestRes.ok) return null;
     const latestJson = await latestRes.json();
-    const items: Array<{ parameter?: { name?: string }; value?: number; datetime?: { utc?: string } }> =
-      Array.isArray(latestJson?.results) ? latestJson.results : [];
+    const items: Array<{
+      parameter?: { name?: string };
+      value?: number;
+      datetime?: { utc?: string };
+    }> = Array.isArray(latestJson?.results) ? latestJson.results : [];
     if (items.length === 0) return null;
 
     const reading: PollutantReading = {
@@ -466,7 +505,6 @@ async function tryFetchOpenAqOfficialStation(
     }
 
     if (reading.pm25 === null && reading.pm10 === null) return null;
-
     return {
       pollutants: reading,
       observedAt: latestIso,
@@ -477,9 +515,6 @@ async function tryFetchOpenAqOfficialStation(
   }
 }
 
-/**
- * Tier 1B: Official CPCB station telemetry relayed via WAQI API when WAQI_API_TOKEN is present.
- */
 async function tryFetchWaqiOfficialStation(
   loc: CityStationConfig
 ): Promise<{
@@ -501,16 +536,14 @@ async function tryFetchWaqiOfficialStation(
     if (json?.status !== 'ok' || !json?.data?.iaqi) return null;
 
     const iaqi = json.data.iaqi;
-    // Note: WAQI iaqi values are US-EPA sub-indices or raw values depending on field; if Open-Meteo raw ug/m3 is available we prefer raw ug/m3 for exact CPCB NAQI math,
-    // or use WAQI station timestamp & metadata.
-    const pm25Val = typeof iaqi.pm25?.v === 'number' ? iaqi.pm25.v : null;
-    const pm10Val = typeof iaqi.pm10?.v === 'number' ? iaqi.pm10.v : null;
-    if (pm25Val === null && pm10Val === null) return null;
+    const rawPm25Iaqi = typeof iaqi.pm25?.v === 'number' ? iaqi.pm25.v : null;
+    const rawPm10Iaqi = typeof iaqi.pm10?.v === 'number' ? iaqi.pm10.v : null;
+    if (rawPm25Iaqi === null && rawPm10Iaqi === null) return null;
 
     return {
       pollutants: {
-        pm25: pm25Val,
-        pm10: pm10Val,
+        pm25: rawPm25Iaqi !== null ? convertWaqiPm25IaqiToUgM3(rawPm25Iaqi) : null,
+        pm10: rawPm10Iaqi !== null ? convertWaqiPm10IaqiToUgM3(rawPm10Iaqi) : null,
         no2: typeof iaqi.no2?.v === 'number' ? iaqi.no2.v : null,
         so2: typeof iaqi.so2?.v === 'number' ? iaqi.so2.v : null,
         co: typeof iaqi.co?.v === 'number' ? Number((iaqi.co.v / 10).toFixed(1)) : null,
@@ -529,16 +562,13 @@ async function tryFetchWaqiOfficialStation(
   }
 }
 
-/**
- * Tier 2: Open-Meteo Air Quality & Weather API (Copernicus CAMS atmospheric data in raw ug/m3)
- * Public, key-free, authoritative secondary source with exact Indian CPCB NAQI sub-index math applied.
- */
 async function tryFetchOpenMeteoCams(
   loc: CityStationConfig
 ): Promise<{
   pollutants: PollutantReading;
   observedAt: string;
   hourly: HourlyWindow[];
+  hourlySource: 'cams_model_forecast' | 'diurnal_boundary_layer_estimate';
   weather: { temperatureC: number | null; humidityPct: number | null; windSpeedKmh: number | null };
 } | null> {
   try {
@@ -564,18 +594,15 @@ async function tryFetchOpenMeteoCams(
     if (wxRes && wxRes.ok) {
       const wxJson = await wxRes.json();
       if (wxJson?.current) {
-        temperatureC =
-          typeof wxJson.current.temperature_2m === 'number'
-            ? wxJson.current.temperature_2m
-            : temperatureC;
-        humidityPct =
-          typeof wxJson.current.relative_humidity_2m === 'number'
-            ? wxJson.current.relative_humidity_2m
-            : humidityPct;
-        windSpeedKmh =
-          typeof wxJson.current.wind_speed_10m === 'number'
-            ? wxJson.current.wind_speed_10m
-            : windSpeedKmh;
+        if (typeof wxJson.current.temperature_2m === 'number') {
+          temperatureC = wxJson.current.temperature_2m;
+        }
+        if (typeof wxJson.current.relative_humidity_2m === 'number') {
+          humidityPct = wxJson.current.relative_humidity_2m;
+        }
+        if (typeof wxJson.current.wind_speed_10m === 'number') {
+          windSpeedKmh = wxJson.current.wind_speed_10m;
+        }
       }
     }
 
@@ -584,7 +611,6 @@ async function tryFetchOpenMeteoCams(
       pm10: typeof cur.pm10 === 'number' ? cur.pm10 : null,
       no2: typeof cur.nitrogen_dioxide === 'number' ? cur.nitrogen_dioxide : null,
       so2: typeof cur.sulphur_dioxide === 'number' ? cur.sulphur_dioxide : null,
-      // Open-Meteo CO is in ug/m3; convert to mg/m3 for CPCB NAQI
       co:
         typeof cur.carbon_monoxide === 'number'
           ? Math.round((cur.carbon_monoxide / 1000) * 100) / 100
@@ -593,13 +619,20 @@ async function tryFetchOpenMeteoCams(
     };
 
     let hourly: HourlyWindow[] = [];
+    let hourlySource: 'cams_model_forecast' | 'diurnal_boundary_layer_estimate' =
+      'diurnal_boundary_layer_estimate';
+
     if (
       Array.isArray(aqJson?.hourly?.time) &&
       Array.isArray(aqJson?.hourly?.pm2_5) &&
       aqJson.hourly.time.length >= 24
     ) {
+      hourlySource = 'cams_model_forecast';
       hourly = aqJson.hourly.time.slice(0, 24).map((tStr: string, idx: number) => {
-        const pm25 = Math.max(2, Math.round(Number(aqJson.hourly.pm2_5[idx] ?? pollutants.pm25 ?? 50)));
+        const pm25 = Math.max(
+          2,
+          Math.round(Number(aqJson.hourly.pm2_5[idx] ?? pollutants.pm25 ?? 50))
+        );
         const pm10 = Math.max(
           5,
           Math.round(Number(aqJson.hourly.pm10?.[idx] ?? pm25 * 1.5))
@@ -624,11 +657,78 @@ async function tryFetchOpenMeteoCams(
       pollutants,
       observedAt: new Date().toISOString(),
       hourly,
+      hourlySource,
       weather: { temperatureC, humidityPct, windSpeedKmh },
     };
   } catch {
     return null;
   }
+}
+
+interface AssembleReportParams {
+  loc: CityStationConfig;
+  stationName: string;
+  pollutants: PollutantReading;
+  weatherRaw: { temperatureC: number | null; humidityPct: number | null; windSpeedKmh: number | null };
+  observedIso: string;
+  now: Date;
+  simulateMode: 'normal' | 'stale' | 'offline' | 'no_station';
+  sourceName: string;
+  sourceTier: 'tier1_official_station' | 'tier2_secondary_model' | 'tier3_offline_reference';
+  sourceUrl: string;
+  isOfficialStation: boolean;
+  hourly?: HourlyWindow[];
+  hourlyForecastSource?: 'cams_model_forecast' | 'diurnal_boundary_layer_estimate';
+  degradedReason?: string;
+}
+
+function assembleAirQualityReport(params: AssembleReportParams): AirQualityReport {
+  const computed = computeOverallNaqi(params.pollutants);
+  const { freshness, dataAgeMinutes } = evaluateFreshness(
+    params.observedIso,
+    params.now.getTime(),
+    params.sourceTier,
+    params.simulateMode
+  );
+  const hourly =
+    params.hourly ?? generateDiurnalHourlyCurve(params.pollutants.pm25 ?? 150);
+
+  return {
+    locationId: params.loc.id,
+    city: params.loc.city,
+    state: params.loc.state,
+    stationName: params.stationName,
+    coordinates: { lat: params.loc.lat, lon: params.loc.lon },
+    observedAt: params.observedIso,
+    fetchedAt: params.now.toISOString(),
+    dataAgeMinutes,
+    naqi: computed.naqi,
+    category: computed.category,
+    dominantPollutant: computed.dominantPollutant,
+    whoPm25Multiple: computed.whoPm25Multiple,
+    healthSummary: getHealthSummaryForCategory(
+      computed.category,
+      computed.naqi,
+      computed.whoPm25Multiple
+    ),
+    pollutants: params.pollutants,
+    subIndices: computed.subIndices,
+    weather: buildWeatherContext(
+      params.weatherRaw.temperatureC,
+      params.weatherRaw.humidityPct,
+      params.weatherRaw.windSpeedKmh
+    ),
+    hourlyForecast: hourly,
+    hourlyForecastSource:
+      params.hourlyForecastSource ?? 'diurnal_boundary_layer_estimate',
+    saferOutdoorWindow: identifySaferOutdoorWindow(hourly, computed.naqi),
+    freshness,
+    sourceName: params.sourceName,
+    sourceTier: params.sourceTier,
+    sourceUrl: params.sourceUrl,
+    isOfficialStation: params.isOfficialStation,
+    degradedReason: params.degradedReason,
+  };
 }
 
 export async function getAirQualityReport(
@@ -646,271 +746,108 @@ export async function getAirQualityReport(
       : baseLoc;
 
   const now = new Date();
-  const nowIso = now.toISOString();
+  const staleIso = new Date(now.getTime() - 6 * 3600 * 1000).toISOString();
+  const staleReason =
+    'Station telemetry is older than 4 hours (Stale Reading). Applying conservative precautionary safety rules.';
 
-  // If offline mode is explicitly requested for resilience verification, immediately return Tier 3 snapshot
   if (simulateMode !== 'offline') {
-    // 1A-Gov. Try Direct Official CPCB Open Government Data Platform (api.data.gov.in) first
     const cpcbGovData = await tryFetchCpcbDataGovStation(loc);
     if (cpcbGovData) {
-      const observedIso =
-        simulateMode === 'stale'
-          ? new Date(now.getTime() - 6 * 3600 * 1000).toISOString()
-          : cpcbGovData.observedAt;
-      const computed = computeOverallNaqi(cpcbGovData.pollutants);
-      const { freshness, dataAgeMinutes } = evaluateFreshness(
-        observedIso,
-        now.getTime(),
-        'tier1_official_station',
-        simulateMode
-      );
-      const hourly = generateDiurnalHourlyCurve(cpcbGovData.pollutants.pm25 ?? 150);
-      return {
-        locationId: loc.id,
-        city: loc.city,
-        state: loc.state,
+      return assembleAirQualityReport({
+        loc,
         stationName: cpcbGovData.stationName,
-        coordinates: { lat: loc.lat, lon: loc.lon },
-        observedAt: observedIso,
-        fetchedAt: nowIso,
-        dataAgeMinutes,
-        naqi: computed.naqi,
-        category: computed.category,
-        dominantPollutant: computed.dominantPollutant,
-        whoPm25Multiple: computed.whoPm25Multiple,
-        healthSummary: getHealthSummaryForCategory(
-          computed.category,
-          computed.naqi,
-          computed.whoPm25Multiple
-        ),
         pollutants: cpcbGovData.pollutants,
-        subIndices: computed.subIndices,
-        weather: buildWeatherContext(
-          loc.offlineWeather.temperatureC,
-          loc.offlineWeather.humidityPct,
-          loc.offlineWeather.windSpeedKmh
-        ),
-        hourlyForecast: hourly,
-        saferOutdoorWindow: identifySaferOutdoorWindow(hourly, computed.naqi),
-        freshness,
+        weatherRaw: loc.offlineWeather,
+        observedIso: simulateMode === 'stale' ? staleIso : cpcbGovData.observedAt,
+        now,
+        simulateMode,
         sourceName: 'Official CPCB Open Government Data Platform India (api.data.gov.in)',
         sourceTier: 'tier1_official_station',
         sourceUrl: 'https://www.data.gov.in/resource/real-time-air-quality-index-various-locations',
         isOfficialStation: true,
-        degradedReason:
-          simulateMode === 'stale'
-            ? 'Station telemetry is older than 4 hours (Stale Reading). Applying conservative safety margins.'
-            : undefined,
-      };
+        degradedReason: simulateMode === 'stale' ? staleReason : undefined,
+      });
     }
 
-    // 1A. Try Tier 1A Official CPCB Station via OpenAQ v3 if OPENAQ_API_KEY is configured
     const openAqData = await tryFetchOpenAqOfficialStation(loc);
     if (openAqData) {
-      const observedIso =
-        simulateMode === 'stale'
-          ? new Date(now.getTime() - 6 * 3600 * 1000).toISOString()
-          : openAqData.observedAt;
-      const computed = computeOverallNaqi(openAqData.pollutants);
-      const { freshness, dataAgeMinutes } = evaluateFreshness(
-        observedIso,
-        now.getTime(),
-        'tier1_official_station',
-        simulateMode
-      );
-      const hourly = generateDiurnalHourlyCurve(openAqData.pollutants.pm25 ?? 150);
-      return {
-        locationId: loc.id,
-        city: loc.city,
-        state: loc.state,
+      return assembleAirQualityReport({
+        loc,
         stationName: openAqData.stationName,
-        coordinates: { lat: loc.lat, lon: loc.lon },
-        observedAt: observedIso,
-        fetchedAt: nowIso,
-        dataAgeMinutes,
-        naqi: computed.naqi,
-        category: computed.category,
-        dominantPollutant: computed.dominantPollutant,
-        whoPm25Multiple: computed.whoPm25Multiple,
-        healthSummary: getHealthSummaryForCategory(
-          computed.category,
-          computed.naqi,
-          computed.whoPm25Multiple
-        ),
         pollutants: openAqData.pollutants,
-        subIndices: computed.subIndices,
-        weather: buildWeatherContext(
-          loc.offlineWeather.temperatureC,
-          loc.offlineWeather.humidityPct,
-          loc.offlineWeather.windSpeedKmh
-        ),
-        hourlyForecast: hourly,
-        saferOutdoorWindow: identifySaferOutdoorWindow(hourly, computed.naqi),
-        freshness,
+        weatherRaw: loc.offlineWeather,
+        observedIso: simulateMode === 'stale' ? staleIso : openAqData.observedAt,
+        now,
+        simulateMode,
         sourceName: 'CPCB / State PCB Continuous Monitoring Station (via OpenAQ v3 Official Feed)',
         sourceTier: 'tier1_official_station',
         sourceUrl: 'https://openaq.org/',
         isOfficialStation: true,
-        degradedReason:
-          simulateMode === 'stale'
-            ? 'Station telemetry is older than 4 hours (Stale Reading). Applying conservative safety margins.'
-            : undefined,
-      };
+        degradedReason: simulateMode === 'stale' ? staleReason : undefined,
+      });
     }
 
-    // 1B. Try Tier 1B Official Station Relay via WAQI if station exists and token is configured
     const waqiData = await tryFetchWaqiOfficialStation(loc);
     if (waqiData) {
-      const observedIso =
-        simulateMode === 'stale'
-          ? new Date(now.getTime() - 6 * 3600 * 1000).toISOString()
-          : waqiData.observedAt;
-      const computed = computeOverallNaqi(waqiData.pollutants);
-      const { freshness, dataAgeMinutes } = evaluateFreshness(
-        observedIso,
-        now.getTime(),
-        'tier1_official_station',
-        simulateMode
-      );
-      const hourly = generateDiurnalHourlyCurve(waqiData.pollutants.pm25 ?? 150);
-      return {
-        locationId: loc.id,
-        city: loc.city,
-        state: loc.state,
+      return assembleAirQualityReport({
+        loc,
         stationName: waqiData.stationName,
-        coordinates: { lat: loc.lat, lon: loc.lon },
-        observedAt: observedIso,
-        fetchedAt: nowIso,
-        dataAgeMinutes,
-        naqi: computed.naqi,
-        category: computed.category,
-        dominantPollutant: computed.dominantPollutant,
-        whoPm25Multiple: computed.whoPm25Multiple,
-        healthSummary: getHealthSummaryForCategory(
-          computed.category,
-          computed.naqi,
-          computed.whoPm25Multiple
-        ),
         pollutants: waqiData.pollutants,
-        subIndices: computed.subIndices,
-        weather: buildWeatherContext(
-          waqiData.weather.temperatureC,
-          waqiData.weather.humidityPct,
-          waqiData.weather.windSpeedKmh
-        ),
-        hourlyForecast: hourly,
-        saferOutdoorWindow: identifySaferOutdoorWindow(hourly, computed.naqi),
-        freshness,
+        weatherRaw: waqiData.weather,
+        observedIso: simulateMode === 'stale' ? staleIso : waqiData.observedAt,
+        now,
+        simulateMode,
         sourceName: 'CPCB / State PCB Continuous Monitoring Station (via WAQI Official Relay)',
         sourceTier: 'tier1_official_station',
         sourceUrl: 'https://airquality.cpcb.gov.in/',
         isOfficialStation: true,
-        degradedReason:
-          simulateMode === 'stale'
-            ? 'Station telemetry is older than 4 hours (Stale Reading). Applying conservative safety margins.'
-            : undefined,
-      };
+        degradedReason: simulateMode === 'stale' ? staleReason : undefined,
+      });
     }
 
-    // 2. Try Tier 2 Open-Meteo Copernicus CAMS Atmospheric Feed
     const meteoData = await tryFetchOpenMeteoCams(loc);
     if (meteoData) {
-      const observedIso =
-        simulateMode === 'stale'
-          ? new Date(now.getTime() - 6 * 3600 * 1000).toISOString()
-          : meteoData.observedAt;
-      const computed = computeOverallNaqi(meteoData.pollutants);
-      const { freshness, dataAgeMinutes } = evaluateFreshness(
-        observedIso,
-        now.getTime(),
-        'tier2_secondary_model',
-        simulateMode
-      );
       const noStationNote = !loc.hasLocalOfficialStation
         ? 'No official CPCB ground monitoring station exists in this locality; showing regional atmospheric grid estimate.'
         : undefined;
 
-      return {
-        locationId: loc.id,
-        city: loc.city,
-        state: loc.state,
+      return assembleAirQualityReport({
+        loc,
         stationName: loc.stationName,
-        coordinates: { lat: loc.lat, lon: loc.lon },
-        observedAt: observedIso,
-        fetchedAt: nowIso,
-        dataAgeMinutes,
-        naqi: computed.naqi,
-        category: computed.category,
-        dominantPollutant: computed.dominantPollutant,
-        whoPm25Multiple: computed.whoPm25Multiple,
-        healthSummary: getHealthSummaryForCategory(
-          computed.category,
-          computed.naqi,
-          computed.whoPm25Multiple
-        ),
         pollutants: meteoData.pollutants,
-        subIndices: computed.subIndices,
-        weather: buildWeatherContext(
-          meteoData.weather.temperatureC,
-          meteoData.weather.humidityPct,
-          meteoData.weather.windSpeedKmh
-        ),
-        hourlyForecast: meteoData.hourly,
-        saferOutdoorWindow: identifySaferOutdoorWindow(meteoData.hourly, computed.naqi),
-        freshness,
+        weatherRaw: meteoData.weather,
+        observedIso: simulateMode === 'stale' ? staleIso : meteoData.observedAt,
+        now,
+        simulateMode,
         sourceName: loc.hasLocalOfficialStation
           ? 'Open-Meteo / Copernicus CAMS Atmospheric Feed (CPCB NAQI Breakpoints Applied)'
           : 'Regional Copernicus CAMS Atmospheric Estimate (No Local CPCB Ground Station)',
         sourceTier: 'tier2_secondary_model',
         sourceUrl: 'https://open-meteo.com/en/docs/air-quality-api',
         isOfficialStation: false,
+        hourly: meteoData.hourly,
+        hourlyForecastSource: meteoData.hourlySource,
         degradedReason:
           simulateMode === 'stale'
             ? 'Atmospheric telemetry timestamp exceeds 4-hour freshness threshold. Conservative safety rules active.'
             : noStationNote,
-      };
+      });
     }
   }
 
-  // 3. Tier 3: Explicit Offline / Degraded Reference Baseline (Never pretends to be live)
-  const refPollutants = loc.offlineReferencePollutants;
-  const computed = computeOverallNaqi(refPollutants);
-  const hourly = generateDiurnalHourlyCurve(refPollutants.pm25 ?? 180);
-  const observedIso = new Date(now.getTime() - 12 * 3600 * 1000).toISOString();
-
-  return {
-    locationId: loc.id,
-    city: loc.city,
-    state: loc.state,
+  return assembleAirQualityReport({
+    loc,
     stationName: `${loc.stationName} [Offline Reference Baseline]`,
-    coordinates: { lat: loc.lat, lon: loc.lon },
-    observedAt: observedIso,
-    fetchedAt: nowIso,
-    dataAgeMinutes: 720,
-    naqi: computed.naqi,
-    category: computed.category,
-    dominantPollutant: computed.dominantPollutant,
-    whoPm25Multiple: computed.whoPm25Multiple,
-    healthSummary: getHealthSummaryForCategory(
-      computed.category,
-      computed.naqi,
-      computed.whoPm25Multiple
-    ),
-    pollutants: refPollutants,
-    subIndices: computed.subIndices,
-    weather: buildWeatherContext(
-      loc.offlineWeather.temperatureC,
-      loc.offlineWeather.humidityPct,
-      loc.offlineWeather.windSpeedKmh
-    ),
-    hourlyForecast: hourly,
-    saferOutdoorWindow: identifySaferOutdoorWindow(hourly, computed.naqi),
-    freshness: 'unavailable',
+    pollutants: loc.offlineReferencePollutants,
+    weatherRaw: loc.offlineWeather,
+    observedIso: new Date(now.getTime() - 12 * 3600 * 1000).toISOString(),
+    now,
+    simulateMode: 'offline',
     sourceName: 'CPCB Winter Smog Historical Reference Baseline (Live Telemetry Unreachable)',
     sourceTier: 'tier3_offline_reference',
     sourceUrl: 'https://cpcb.nic.in/National-Air-Quality-Index/',
     isOfficialStation: false,
     degradedReason:
       'Live environmental provider is currently unreachable or in offline test mode. Displaying clearly labeled historical winter baseline for this station so your household retains conservative protection guidance.',
-  };
+  });
 }

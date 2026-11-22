@@ -16,8 +16,14 @@ test.describe('SmogShield AI — 10 Mandatory Competition Scenarios E2E', () => 
     const naqiValue = page.getByTestId('naqi-value');
     await expect(naqiValue).toBeVisible();
 
-    // Verify 7 daily action slots are rendered
+    // Verify 7 daily action slots and What-If Decision Simulator are rendered
+    await expect(page.getByTestId('what-if-simulator')).toBeVisible();
+    await page.getByTestId('whatif-btn-whatif-commute').click();
+    await expect(page.getByTestId('whatif-avoided-dose')).toContainText('µg PM2.5 avoided');
+
     await expect(page.getByTestId('daily-slot-morning_routine')).toBeVisible();
+    await page.getByTestId('evidence-btn-slot-morning').click();
+    await expect(page.getByTestId('evidence-drawer-slot-morning')).toBeVisible();
     await expect(page.getByTestId('daily-slot-commute_school_work')).toBeVisible();
     await expect(page.getByTestId('daily-slot-outdoor_exercise')).toBeVisible();
     await expect(page.getByTestId('daily-slot-high_pollution_night')).toBeVisible();
@@ -125,11 +131,13 @@ test.describe('SmogShield AI — 10 Mandatory Competition Scenarios E2E', () => 
     await page.goto('/');
     await expect(page.locator('h1')).toBeVisible();
 
-    // Scenario 10: Keyboard navigation (Skip link & Tab focus)
+    // Scenario 10: Keyboard navigation (Skip link, Tab focus & WAI-ARIA tablist)
     await page.keyboard.press('Tab');
     const skipLink = page.locator('a[href="#main-workspace"]');
     await expect(skipLink).toBeFocused();
     await page.getByTestId('auth-guest-continue-btn').click();
     await expect(page.getByTestId('naqi-value')).toBeVisible();
+    await expect(page.locator('[role="tablist"]')).toBeVisible();
+    await expect(page.getByTestId('tab-planner')).toHaveAttribute('aria-selected', 'true');
   });
 });

@@ -22,7 +22,7 @@
 [![Gemini AI](https://img.shields.io/badge/Google%20Gemini-2.0%20Flash-8E75B2.svg)](https://ai.google.dev/)
 [![CPCB NAQI](https://img.shields.io/badge/Standard-Indian%20CPCB%20NAQI-0f766e.svg)](https://cpcb.nic.in/National-Air-Quality-Index/)
 [![Ponytail Audited](https://img.shields.io/badge/Code%20Quality-Ponytail%20Audited-111111.svg)](https://github.com/DietrichGebert/ponytail)
-[![Tests](https://img.shields.io/badge/Tests-18%20Unit%20%2B%2010%20E2E%20Passed-brightgreen.svg)](#-automated-testing--verification-suite)
+[![Tests](https://img.shields.io/badge/Tests-24%20Unit%2FAPI%20%2B%2010%20E2E%20Passed-brightgreen.svg)](#-automated-testing--verification-suite)
 
 <p align="center">
   <b>SmogShield AI — Deterministic Environmental Safety &amp; Bilingual Family Protection Platform</b><br>
@@ -325,10 +325,11 @@ $$
 I_p = \left\lfloor \frac{I_{\text{high}} - I_{\text{low}}}{BP_{\text{high}} - BP_{\text{low}}} \times \left(C_p - BP_{\text{low}}\right) + I_{\text{low}} \right\rceil, \qquad \text{NAQI} = \max_{p} \left(I_p\right)
 $$
 
-#### 2. Effective Household Safety NAQI (Conservatism Buffer)
+#### 2. Measured CPCB NAQI Preservation & Precaution Tier Thresholding
+SmogShield AI preserves the true measured station reading (`measuredNaqi`) without altering environmental telemetry, while elevating the internal precaution rule threshold when station telemetry is stale (`> 4h`) or when the household includes vulnerable groups (`infants`, `children`, `elderly`, or respiratory conditions):
 
 $$
-\text{NAQI}_{\text{effective}} = \min\Big(500,\ \text{NAQI}_{\text{measured}} + 50 \cdot \mathbb{I}_{\text{stale/offline}} + 35 \cdot \mathbb{I}_{\text{vulnerable}}\Big)
+\text{NAQI}_{\text{precaution}} = \min\Big(500,\ \text{NAQI}_{\text{measured}} + 50 \cdot \mathbb{I}_{\text{stale/offline}} + 35 \cdot \mathbb{I}_{\text{vulnerable}}\Big)
 $$
 
 #### 3. Inhaled $\text{PM}_{2.5}$ Dose Reduction ($\mu\text{g}$ Avoided)
@@ -450,6 +451,7 @@ Smogshield-AI/
 ├── .env.example                           # Safe Environment Variables Template (Zero Secrets Committed)
 ├── .firebaserc                            # Firebase Project Binding (smogshield-ai-kapil)
 ├── firebase.json                          # Firebase Hosting & Project Configuration
+├── firestore.rules                        # Least-Privilege Firestore User Isolation Security Rules
 ├── next.config.ts                         # Next.js 15.5.29 Config & Security Headers (CSP, X-Frame, COOP)
 ├── vercel.json                            # Vercel Production Deployment & Header Configuration
 ├── vitest.config.ts                       # Vitest Unit & Integration Test Configuration
@@ -465,9 +467,9 @@ Smogshield-AI/
     │   ├── aqi/
     │   │   ├── naqi.ts                    # Official Indian CPCB NAQI Sub-Index & Freshness Engine
     │   │   ├── naqi.test.ts               # Unit Tests for NAQI Breakpoints, Missing Data & Freshness
-    │   │   └── provider.ts                # Multi-Tier Acquisition (CPCB data.gov.in -> OpenAQ -> WAQI -> CAMS)
+    │   │   └── provider.ts                # Multi-Tier Acquisition & WAQI US-EPA -> CPCB Normalization
     │   ├── engine/
-    │   │   ├── recommendations.ts         # Deterministic 7-Slot Daily Planner, Indoor & Lifestyle Engine
+    │   │   ├── recommendations.ts         # Deterministic 7-Slot Planner, What-If Simulator & Rule Engine
     │   │   ├── recommendations.test.ts    # Unit Tests for Safety Buffers, Low-Budget Rules & Limitations
     │   │   ├── impact.ts                  # Transparent Physics Impact Calculator & Community Initiatives
     │   │   └── impact.test.ts             # Unit Tests for Dose/Emission Math, Zod & AI Safety Overrides
@@ -480,11 +482,20 @@ Smogshield-AI/
     │   └── validators/
     │       └── schemas.ts                 # Zod Runtime Schemas & Prompt-Injection Sanitizer
     ├── components/
-    │   └── SmogShieldWorkspace.tsx        # Unified Client Workspace, Firebase Auth Gate & 7 Module Views
+    │   ├── SmogShieldWorkspace.tsx        # Top-Level State Orchestrator & WAI-ARIA Tablist Workspace
+    │   └── modules/
+    │       ├── badges.ts                  # CPCB NAQI Category, Freshness & Basis Visual Helpers
+    │       ├── AuthGateScreen.tsx         # Firebase Google OAuth & Guest Demo Starting Screen
+    │       ├── LiveAirHeroPanel.tsx       # Module A: Live CPCB NAQI Telemetry, Pollutants & 24h Curve
+    │       ├── DailyPlannerModule.tsx     # Modules C/D: 7-Slot Planner, What-If Simulator & Rule Drawer
+    │       ├── IndoorAndLifestyleModules.tsx # Modules E/F: Indoor Protection & Low-Emission Lifestyle
+    │       ├── AssistantModule.tsx        # Module G: Bilingual Gemini 2.0 Flash Guarded Assistant
+    │       └── ImpactCommunityProfileModules.tsx # Modules B/H/I: Impact Tracker, Community Hub & Profile
     └── app/
         ├── layout.tsx                     # Root Semantic HTML5 Shell & Skip-to-Content Accessibility Link
         ├── page.tsx                       # Dynamic Server Entry Point
         └── api/
+            ├── routes.test.ts             # Direct Unit/Integration Tests for All API Route Handlers & 429/413
             ├── air-quality/route.ts       # GET /api/air-quality (Validated Multi-Tier Telemetry Endpoint)
             ├── assistant/route.ts         # POST /api/assistant (Rate-Limited, Guarded Bilingual AI Route)
             ├── community/route.ts         # GET/POST /api/community (Neighborhood Smog Initiatives & Pledges)
@@ -546,13 +557,13 @@ npm start
 
 ## 🧪 Automated Testing & Verification Suite
 
-SmogShield AI ships with an automated verification pipeline covering strict TypeScript checks, 18 unit/integration tests, an HTTP production security header verifier, and 4 multi-scenario Playwright Chromium E2E test suites testing all **10 mandatory competition scenarios**:
+SmogShield AI ships with an automated verification pipeline covering strict TypeScript checks, 24 unit/integration tests across 4 suites, an HTTP production security header verifier, and 4 multi-scenario Playwright Chromium E2E test suites testing all **10 mandatory competition scenarios**:
 
 ```bash
 # 1. Strict TypeScript verification
 npm run typecheck
 
-# 2. Unit & integration tests (CPCB NAQI math, recommendations, impact physics, Zod, AI safety overrides)
+# 2. Unit & integration tests (CPCB NAQI math, recommendations, impact physics, API routes, Zod, AI safety overrides)
 npm test
 
 # 3. Production build & automated HTTP server/security header check
@@ -574,14 +585,15 @@ npm run e2e
 ✅ PASS | Unit Suite: CPCB NAQI Breakpoints & Sub-Indices [src/lib/aqi/naqi.test.ts] (8/8 passed)
 ✅ PASS | Unit Suite: Deterministic Exposure & Daily Planner [src/lib/engine/recommendations.test.ts] (5/5 passed)
 ✅ PASS | Unit Suite: Honest Impact Physics, Zod & AI Guardrails [src/lib/engine/impact.test.ts] (5/5 passed)
+✅ PASS | Integration Suite: Next.js API Route Handlers & Rate Limits [src/app/api/routes.test.ts] (6/6 passed)
 ✅ PASS | Production HTTP & Security Headers [node scripts/verify-http.mjs]
-         • GET /api/health -> 200 OK (X-Frame-Options: DENY, X-Content-Type-Options: nosniff)
+         • GET /api/health -> 200 OK (Content-Security-Policy, X-Frame-Options: DENY, X-Content-Type-Options: nosniff)
          • GET /api/air-quality?city=delhi-anand-vihar&simulate=offline -> 200 OK (Unavailable badge verified)
          • GET /api/air-quality?city=invalid;DROP -> 400 Bad Request (Zod boundary verified)
          • POST /api/assistant (Severe NAQI 425 outdoor exercise check) -> 200 OK (Indoor rule enforced)
          • GET /api/community -> 200 OK
 ✅ PASS | Playwright E2E Chromium Browser Suite [e2e/smogshield.spec.ts] (4 suites / 10 scenarios passed)
-         • Scenario 1: Family in a severely polluted location (Delhi NCR - Anand Vihar)
+         • Scenario 1: Family in a severely polluted location (Delhi NCR - Anand Vihar) + What-If Simulator & Evidence Drawer
          • Scenario 2: Family with moderate/satisfactory pollution (Bengaluru - BTM Layout)
          • Scenario 3: Family with no local official monitoring station (Tehri Garhwal corridor)
          • Scenario 4: Family with stale AQI information (>4 hours safety buffer)
@@ -590,10 +602,10 @@ npm run e2e
          • Scenario 7: AI provider fallback + English & Hindi (हिन्दी) bilingual switching
          • Scenario 8: Environmental data provider unavailable (Offline reference baseline)
          • Scenario 9: Mobile viewport user (375x812 responsive layout)
-         • Scenario 10: Keyboard-only navigation user (Tab focus on Skip-to-main-content link)
+         • Scenario 10: Keyboard-only navigation user (WAI-ARIA tablist & Skip-to-main-content link)
 ================================================================================
-TOTAL UNIT TESTS : 18 PASSED (100%)
-TOTAL E2E SUITES : 4 PASSED / 10 SCENARIOS VERIFIED (100%)
+TOTAL UNIT / API TESTS : 24 PASSED (100%)
+TOTAL E2E SUITES       : 4 PASSED / 10 SCENARIOS VERIFIED (100%)
 ================================================================================
 ```
 

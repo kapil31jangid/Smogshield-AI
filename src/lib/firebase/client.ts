@@ -6,27 +6,33 @@ export interface FirebaseAuthUser {
   email: string | null;
 }
 
-const firebaseConfig = {
-  apiKey:
-    process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
-    'AIzaSyBsJzC3H6LHJtsygG-e5HlbCRFCXNsv6bo',
-  authDomain:
-    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
-    'smogshield-ai-kapil.firebaseapp.com',
-  projectId:
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'smogshield-ai-kapil',
-  storageBucket:
-    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-    'smogshield-ai-kapil.firebasestorage.app',
-  messagingSenderId:
-    process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '609090729839',
-  appId:
-    process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
-    '1:609090729839:web:2b8cce908b660935a0da9a',
-};
+function getFirebaseConfigFromEnv() {
+  const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim();
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+  if (!apiKey || !projectId || apiKey.includes('your_')) {
+    return null;
+  }
+  return {
+    apiKey,
+    authDomain:
+      process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim() ||
+      `${projectId}.firebaseapp.com`,
+    projectId,
+    storageBucket:
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?.trim() ||
+      `${projectId}.firebasestorage.app`,
+    messagingSenderId:
+      process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID?.trim() || '',
+    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim() || '',
+  };
+}
 
 async function getFirebaseClientAsync() {
   if (typeof window === 'undefined') {
+    return null;
+  }
+  const config = getFirebaseConfigFromEnv();
+  if (!config) {
     return null;
   }
   const [{ getApp, getApps, initializeApp }, authMod, firestoreMod] =
@@ -35,7 +41,7 @@ async function getFirebaseClientAsync() {
       import('firebase/auth'),
       import('firebase/firestore'),
     ]);
-  const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+  const app = getApps().length > 0 ? getApp() : initializeApp(config);
   const auth = authMod.getAuth(app);
   const db = firestoreMod.getFirestore(app);
   return { app, auth, db, authMod, firestoreMod };
@@ -87,7 +93,9 @@ export function subscribeToAuthState(
 export async function signInWithGooglePopup(): Promise<FirebaseAuthUser> {
   const client = await getFirebaseClientAsync();
   if (!client) {
-    throw new Error('Firebase Authentication is not available outside the browser.');
+    throw new Error(
+      'Firebase Authentication is not configured in this environment. Please use Guest / Demo Family Mode.'
+    );
   }
   const provider = new client.authMod.GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
@@ -109,6 +117,7 @@ export async function loadCloudHouseholdData(uid: string): Promise<{
   profile?: FamilyProfile;
   completedActions?: CompletedActionRecord[];
 } | null> {
+  if (!uid) return null;
   try {
     const client = await getFirebaseClientAsync();
     if (!client) return null;
@@ -132,6 +141,7 @@ export async function syncCloudHouseholdData(
   profile: FamilyProfile,
   completedActions: CompletedActionRecord[]
 ): Promise<boolean> {
+  if (!uid) return false;
   try {
     const client = await getFirebaseClientAsync();
     if (!client) return false;
@@ -139,6 +149,7 @@ export async function syncCloudHouseholdData(
     await setDoc(
       doc(client.db, 'households', uid),
       {
+        ownerUid: uid,
         profile,
         completedActions: completedActions.slice(0, 50),
         updatedAt: new Date().toISOString(),

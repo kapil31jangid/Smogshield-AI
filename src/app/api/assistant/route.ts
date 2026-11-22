@@ -22,6 +22,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 16_384) {
+    return NextResponse.json(
+      {
+        error: 'PAYLOAD_TOO_LARGE',
+        message: 'Request payload exceeds 16 KB security limit.',
+      },
+      { status: 413 }
+    );
+  }
+
   let body: unknown;
   try {
     body = await request.json();

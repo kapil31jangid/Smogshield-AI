@@ -85,6 +85,7 @@ export interface AirQualityReport {
   subIndices: PollutantSubIndex[];
   weather: WeatherContext;
   hourlyForecast: HourlyWindow[];
+  hourlyForecastSource?: 'cams_model_forecast' | 'diurnal_boundary_layer_estimate';
   saferOutdoorWindow: {
     label: string;
     expectedNaqi: number;
@@ -161,7 +162,28 @@ export interface DailyActionSlot {
   ruleId: string;
   outcomeCategory: OutcomeCategory;
   estimatedExposureReductionPct: number;
+  exposureReductionRangeLabel?: string;
   impactActionType: ImpactActionType;
+}
+
+export interface WhatIfScenarioComparison {
+  id: string;
+  titleEn: string;
+  titleHi: string;
+  durationMinutes: number;
+  baselineOptionEn: string;
+  baselineOptionHi: string;
+  baselineDoseUg: number;
+  saferOptionEn: string;
+  saferOptionHi: string;
+  saferDoseUg: number;
+  avoidedDoseUg: number;
+  reductionRangeLabel: string;
+  mechanismEn: string;
+  mechanismHi: string;
+  limitationEn: string;
+  limitationHi: string;
+  basis: EvidenceBasis;
 }
 
 export interface IndoorGuidanceItem {
