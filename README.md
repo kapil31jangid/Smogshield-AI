@@ -6,10 +6,12 @@
 ### **Challenge Vertical:** Climate Tech, Environmental Public-Health Intelligence & Sustainable Household Decision Support
 ### **Problem Statement:** GenAI Assistant Helping Families and Communities Navigate Severe Winter Smog and Urban Air Pollution
 ### **Core Principle:** *From Air-Quality Awareness to Actionable Family Protection*
+### **Live Public Deployment:** [https://smogshield-ai-woad.vercel.app/](https://smogshield-ai-woad.vercel.app/)
 ### **Author:** `Kapil Jangid`
 
 ---
 
+[![Live Deployment](https://img.shields.io/badge/Live%20Deployment-smogshield--ai--woad.vercel.app-0f766e?style=flat&logo=vercel)](https://smogshield-ai-woad.vercel.app/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/Node.js-v24.x-green.svg)](https://nodejs.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-15.5.29-black.svg)](https://nextjs.org/)
