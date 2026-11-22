@@ -18,9 +18,7 @@ import {
 import type { CompletedActionRecord, FamilyProfile } from '@/types/smogshield';
 
 const firebaseConfig = {
-  apiKey:
-    process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
-    'AIzaSyBsJzC3H6LHJtsygG-e5HlbCRFCXNsv6bo',
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain:
     process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
     'smogshield-ai-kapil.firebaseapp.com',
@@ -46,6 +44,9 @@ export function getFirebaseClient(): {
   db: Firestore | null;
 } {
   if (typeof window === 'undefined') {
+    return { app: null, auth: null, db: null };
+  }
+  if (!firebaseConfig.apiKey) {
     return { app: null, auth: null, db: null };
   }
   try {
