@@ -10,6 +10,9 @@ export async function GET() {
   const hasCpcbKey =
     Boolean(process.env.CPCB_DATA_GOV_API_KEY) &&
     !process.env.CPCB_DATA_GOV_API_KEY!.includes('your_');
+  const hasOpenAqKey =
+    Boolean(process.env.OPENAQ_API_KEY) &&
+    !process.env.OPENAQ_API_KEY!.includes('your_');
 
   const hasFirebaseProject = Boolean(
     process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
@@ -26,7 +29,8 @@ export async function GET() {
         'smogshield-ai-kapil',
       capabilities: {
         firebaseConfigured: hasFirebaseProject,
-        tier1StationConfigured: hasWaqiToken || hasCpcbKey,
+        openAqConfigured: hasOpenAqKey,
+        tier1StationConfigured: hasOpenAqKey || hasWaqiToken || hasCpcbKey,
         tier2OpenMeteoCamsEnabled: true,
         tier3OfflineReferenceEnabled: true,
         genAiLiveConfigured: hasGeminiKey,

@@ -323,6 +323,86 @@ async function fetchWithTimeout(url: string, timeoutMs = 3800): Promise<Response
 }
 
 /**
+ * Tier 1A: Official Indian Government CPCB / State PCB stations via OpenAQ v3 API (when OPENAQ_API_KEY is configured)
+ * or CPCB Open Government Data Platform (api.data.gov.in when CPCB_DATA_GOV_API_KEY is configured).
+ */
+async function tryFetchOpenAqOfficialStation(
+  loc: CityStationConfig
+): Promise<{
+  pollutants: PollutantReading;
+  observedAt: string;
+  stationName: string;
+} | null> {
+  const apiKey = process.env.OPENAQ_API_KEY;
+  if (!apiKey || apiKey.includes('your_') || !loc.hasLocalOfficialStation) {
+    return null;
+  }
+
+  try {
+    const url = `https://api.openaq.org/v3/locations?coordinates=${loc.lat},${loc.lon}&radius=15000&limit=5`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        'X-API-Key': apiKey.trim(),
+      },
+      next: { revalidate: 300 },
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) return null;
+    const json = await res.json();
+    const firstLoc = Array.isArray(json?.results) ? json.results[0] : null;
+    if (!firstLoc?.id) return null;
+
+    const latestRes = await fetchWithTimeout(
+      `https://api.openaq.org/v3/locations/${firstLoc.id}/latest`,
+      3500
+    );
+    if (!latestRes.ok) return null;
+    const latestJson = await latestRes.json();
+    const items: Array<{ parameter?: { name?: string }; value?: number; datetime?: { utc?: string } }> =
+      Array.isArray(latestJson?.results) ? latestJson.results : [];
+    if (items.length === 0) return null;
+
+    const reading: PollutantReading = {
+      pm25: null,
+      pm10: null,
+      no2: null,
+      so2: null,
+      co: null,
+      o3: null,
+    };
+    let latestIso = new Date().toISOString();
+
+    for (const item of items) {
+      const pName = item.parameter?.name?.toLowerCase();
+      const val = typeof item.value === 'number' && item.value >= 0 ? item.value : null;
+      if (val === null) continue;
+      if (pName === 'pm25') reading.pm25 = val;
+      if (pName === 'pm10') reading.pm10 = val;
+      if (pName === 'no2') reading.no2 = val;
+      if (pName === 'so2') reading.so2 = val;
+      if (pName === 'co') reading.co = val > 50 ? Number((val / 1000).toFixed(2)) : val;
+      if (pName === 'o3') reading.o3 = val;
+      if (item.datetime?.utc) latestIso = item.datetime.utc;
+    }
+
+    if (reading.pm25 === null && reading.pm10 === null) return null;
+
+    return {
+      pollutants: reading,
+      observedAt: latestIso,
+      stationName: firstLoc.name ? `${firstLoc.name} (CPCB / OpenAQ v3)` : loc.stationName,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Tier 1B: Official CPCB station telemetry relayed via WAQI API when WAQI_API_TOKEN is present.
  */
 async function tryFetchWaqiOfficialStation(
@@ -495,7 +575,61 @@ export async function getAirQualityReport(
 
   // If offline mode is explicitly requested for resilience verification, immediately return Tier 3 snapshot
   if (simulateMode !== 'offline') {
-    // 1. Try Tier 1 Official Station Relay if station exists and token is configured
+    // 1A. Try Tier 1A Official CPCB Station via OpenAQ v3 if OPENAQ_API_KEY is configured
+    const openAqData = await tryFetchOpenAqOfficialStation(loc);
+    if (openAqData) {
+      const observedIso =
+        simulateMode === 'stale'
+          ? new Date(now.getTime() - 6 * 3600 * 1000).toISOString()
+          : openAqData.observedAt;
+      const computed = computeOverallNaqi(openAqData.pollutants);
+      const { freshness, dataAgeMinutes } = evaluateFreshness(
+        observedIso,
+        now.getTime(),
+        'tier1_official_station',
+        simulateMode
+      );
+      const hourly = generateDiurnalHourlyCurve(openAqData.pollutants.pm25 ?? 150);
+      return {
+        locationId: loc.id,
+        city: loc.city,
+        state: loc.state,
+        stationName: openAqData.stationName,
+        coordinates: { lat: loc.lat, lon: loc.lon },
+        observedAt: observedIso,
+        fetchedAt: nowIso,
+        dataAgeMinutes,
+        naqi: computed.naqi,
+        category: computed.category,
+        dominantPollutant: computed.dominantPollutant,
+        whoPm25Multiple: computed.whoPm25Multiple,
+        healthSummary: getHealthSummaryForCategory(
+          computed.category,
+          computed.naqi,
+          computed.whoPm25Multiple
+        ),
+        pollutants: openAqData.pollutants,
+        subIndices: computed.subIndices,
+        weather: buildWeatherContext(
+          loc.offlineWeather.temperatureC,
+          loc.offlineWeather.humidityPct,
+          loc.offlineWeather.windSpeedKmh
+        ),
+        hourlyForecast: hourly,
+        saferOutdoorWindow: identifySaferOutdoorWindow(hourly, computed.naqi),
+        freshness,
+        sourceName: 'CPCB / State PCB Continuous Monitoring Station (via OpenAQ v3 Official Feed)',
+        sourceTier: 'tier1_official_station',
+        sourceUrl: 'https://openaq.org/',
+        isOfficialStation: true,
+        degradedReason:
+          simulateMode === 'stale'
+            ? 'Station telemetry is older than 4 hours (Stale Reading). Applying conservative safety margins.'
+            : undefined,
+      };
+    }
+
+    // 1B. Try Tier 1B Official Station Relay via WAQI if station exists and token is configured
     const waqiData = await tryFetchWaqiOfficialStation(loc);
     if (waqiData) {
       const observedIso =

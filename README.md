@@ -136,6 +136,7 @@ All secrets are strictly **server-side only** (no `NEXT_PUBLIC_` secret variable
 
 | Variable | Required? | Description |
 |---|---|---|
+| `OPENAQ_API_KEY` | Optional | OpenAQ v3 API key (`X-API-Key`) for querying official Indian CPCB / State PCB monitoring stations (Tier 1A). |
 | `CPCB_DATA_GOV_API_KEY` | Optional | Official Open Government Data Platform India (`data.gov.in`) CPCB station API key (Tier 1). |
 | `WAQI_API_TOKEN` | Optional | World Air Quality Index token relaying CPCB/DPCC continuous monitoring stations (Tier 1). |
 | `GEMINI_API_KEY` | Optional | Google Gemini API key for live LLM generation in `/api/assistant`. When omitted, the assistant automatically runs in `deterministic_fallback` mode with full bilingual context support. |
