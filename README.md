@@ -332,7 +332,7 @@ $$
 $$
 
 #### 3. Inhaled $\text{PM}_{2.5}$ Dose Reduction ($\mu\text{g}$ Avoided)
-Using US EPA / ICMR respiratory minute ventilation rates ($V_{\text{exercise}} \approx 0.022\ \text{m}^3/\text{min}$ vs. $V_{\text{indoor\_rest}} \approx 0.008\text{–}0.009\ \text{m}^3/\text{min}$):
+Using US EPA / ICMR respiratory minute ventilation rates ($V_{\text{exercise}} \approx 0.022\ \text{m}^3/\text{min}$ vs. $V_{\text{indoor}} \approx 0.008\text{–}0.009\ \text{m}^3/\text{min}$):
 
 $$
 \Delta \text{Dose}_{\text{PM}_{2.5}}\ (\mu\text{g}) = \Big(V_{\text{baseline}} \times C_{\text{outdoor}} - V_{\text{alternative}} \times C_{\text{protected}}\Big) \times t_{\text{minutes}}
@@ -341,7 +341,7 @@ $$
 #### 4. Tailpipe Emissions Avoided (ARAI / CPCB Urban Driving Cycle)
 
 $$
-\Delta E_{\text{CO}_2\text{e}}\ (\text{g}) = d_{\text{km}} \times \left(EF_{\text{solo\_vehicle}} - EF_{\text{alternative}}\right) + t_{\text{idling\_min}} \times 26\ \text{g/min}
+\Delta E_{\text{CO}_2\text{e}}\ (\text{g}) = d_{\text{km}} \times \left(EF_{\text{solo}} - EF_{\text{alternative}}\right) + t_{\text{idling}} \times 26\ \text{g/min}
 $$
 
 ### Distinguishing Exposure Reduction vs. Indoor Air vs. Emissions
